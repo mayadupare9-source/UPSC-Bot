@@ -18,7 +18,7 @@ YOUR_TELEGRAM_ID = 1168032644
 
 # --- AI SETUP ---
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -221,4 +221,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("buy", buy))
     app.add_handler(CommandHandler("add", add_credits))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.PDF, handle_file))
+
     app.run_polling()
