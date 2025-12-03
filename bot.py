@@ -1,24 +1,23 @@
 import os
-import time
+import base64
 import sqlite3
 from threading import Thread
 from flask import Flask
-import google.generativeai as genai
+from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # <--- New Key Name
 
 # ---------------------------------------------------------
-# CHANGE #1: PASTE YOUR TELEGRAM USER ID HERE (No Quotes)
+# CHANGE #1: PASTE YOUR TELEGRAM ADMIN ID HERE
 # ---------------------------------------------------------
 YOUR_TELEGRAM_ID = 1168032644 
 
-# --- AI SETUP ---
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-pro')
+# --- AI SETUP (GROQ) ---
+client = Groq(api_key=GROQ_API_KEY)
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -34,9 +33,14 @@ init_db()
 # --- SERVER KEEPER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Bot is Alive!"
+def home(): return "Groq Bot is Alive!"
 def run_http(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): t = Thread(target=run_http); t.start()
+
+# --- HELPER: ENCODE IMAGE ---
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
 # --- COMMANDS ---
 
@@ -47,9 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    
-    if not c.fetchone():
+    if not c.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone():
         referrer = None
         if args and args[0].startswith("ref_"):
             try:
@@ -57,16 +59,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if referrer != user_id:
                     await context.bot.send_message(referrer, "🎉 Referral Bonus! +1 Credit.")
             except: pass
-        
+
         c.execute("INSERT INTO users VALUES (?, ?, ?)", (user_id, 3, referrer))
         conn.commit()
         
-        # UPDATED WELCOME MESSAGE
         msg = (
             f"👋 **Welcome {first_name}!**\n\n"
-            "I am your AI UPSC Mentor. You have **3 Free Credits**.\n\n"
+            "I am your AI UPSC Mentor (Powered by Llama 3).\n"
+            "You have **3 Free Credits**.\n\n"
             "🔥 **Features:**\n"
-            "1. 📎 **Upload PDF/Photo** -> Check Answer\n"
+            "1. 📸 **Upload Photo** -> Check Answer\n"
             "2. 🧠 `/explain [Topic]` (Free)\n"
             "3. 📰 `/news [Link]` (Free)\n"
             "4. 💎 `/buy` -> Get Credits"
@@ -79,48 +81,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args)
     if not topic:
-        await update.message.reply_text("❌ Usage: `/explain [Topic]`\nExample: `/explain GDP`")
+        await update.message.reply_text("❌ Usage: `/explain [Topic]`")
         return
     
-    # Send a "Thinking..." message so user knows it's working
-    status_msg = await update.message.reply_text(f"🧠 **Explaining '{topic}'...**")
-    
+    await update.message.reply_text(f"🧠 **Thinking...**")
     try:
-        prompt = f"Explain '{topic}' to a UPSC aspirant in simple English with an Indian example."
-        response = model.generate_content(prompt)
-        # Removed parse_mode to prevent Markdown errors
-        await update.message.reply_text(response.text)
+        chat_completion = client.chat.completions.create(
+            messages=[{
+                "role": "user",
+                "content": f"Explain '{topic}' to a UPSC aspirant in simple English with an Indian example.",
+            }],
+            model="llama-3.1-8b-instant", 
+        )
+        await update.message.reply_text(chat_completion.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text("⚠️ Error connecting to AI. Please try again.")
-        print(f"Explain Error: {e}")
-    
-    # Delete the "Thinking..." message
-    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
+        await update.message.reply_text(f"⚠️ AI Error: {e}")
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
     if not text:
         await update.message.reply_text("❌ Usage: `/news [Paste Link/Text]`")
         return
-        
-    status_msg = await update.message.reply_text("📰 **Summarizing...**")
-    
+    await update.message.reply_text("📰 **Summarizing...**")
     try:
-        prompt = f"Summarize this for UPSC in 3 bullet points: {text[:2000]}"
-        response = model.generate_content(prompt)
-        # Removed parse_mode to prevent Markdown errors
-        await update.message.reply_text(response.text)
+        chat_completion = client.chat.completions.create(
+            messages=[{
+                "role": "user",
+                "content": f"Summarize this for UPSC in 3 bullet points: {text[:2000]}",
+            }],
+            model="llama-3.1-8b-instant", 
+        )
+        await update.message.reply_text(chat_completion.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text("⚠️ Error reading news. Please try again.")
-    
-    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=status_msg.message_id)
+        await update.message.reply_text(f"⚠️ AI Error: {e}")
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    # ---------------------------------------------------------
+    # CHANGE #2: PASTE YOUR UPI ID BELOW
+    # ---------------------------------------------------------
+    YOUR_UPI_ID = "mayadupare9@okaxis" 
     
-    # ---------------------------------------------------------
-    # CHANGE #2: PASTE YOUR UPI ID BELOW inside the backticks
-    # ---------------------------------------------------------
     msg = f"""
     💎 **Premium Credit Packs**
     
@@ -129,7 +130,7 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **Mains Warrior:** ₹499 (60 Evaluations)
     
     **How to Pay:**
-    1. Send to: `mayadupare9@okaxis` 
+    1. Send to: `{YOUR_UPI_ID}` 
     2. Send Screenshot + ID to Admin.
     
     🆔 **Your ID:** `{user_id}`
@@ -151,61 +152,49 @@ async def add_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ Usage: `/add [User_ID] [Amount]`")
 
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    c.execute("SELECT credits, referrer_id FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
+    row = c.execute("SELECT credits, referrer_id FROM users WHERE user_id=?", (user_id,)).fetchone()
     
     if not row or row[0] <= 0:
-        await update.message.reply_text(f"❌ **0 Credits!** Please `/buy` more.")
+        await update.message.reply_text("❌ **0 Credits!** Please `/buy` more.")
         conn.close()
         return
 
-    msg = await update.message.reply_text("🔍 **Strict Examiner is checking...**\n(Reading file, please wait...)")
+    msg = await update.message.reply_text("🔍 **Llama Vision is checking...**")
     
-    file_name = "temp_file"
-    if update.message.document:
-        file_obj = await update.message.document.get_file()
-        file_name = "temp.pdf"
-    elif update.message.photo:
-        file_obj = await update.message.photo[-1].get_file()
-        file_name = "temp.jpg"
-    else:
-        return
-
-    await file_obj.download_to_drive(file_name)
-    
-    prompt = """
-    You are a strict UPSC Mains Examiner.
-    1. Read the attached document (Handwritten Answer).
-    2. Transcribe the first 1 sentence to prove you read it.
-    3. Evaluate: Structure, Content, Presentation.
-    4. Score out of 10.
-    5. List 2 Critical Flaws.
-    """
-    
+    # Download Photo (Groq accepts jpg/png)
+    file_name = "temp.jpg"
     try:
-        uploaded_file = genai.upload_file(path=file_name, display_name="Student Answer")
+        photo_file = await update.message.photo[-1].get_file()
+        await photo_file.download_to_drive(file_name)
         
-        # Wait for processing
-        while uploaded_file.state.name == "PROCESSING":
-            time.sleep(2)
-            uploaded_file = genai.get_file(uploaded_file.name)
-
-        response = model.generate_content([uploaded_file, prompt])
+        # Encode for Groq
+        base64_image = encode_image(file_name)
         
+        chat_completion = client.chat.completions.create(
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "You are a strict UPSC Examiner. Transcribe 1 sentence. Check Intro, Body, Conclusion. Score out of 10."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                ],
+            }],
+            model="llama-3.2-11b-vision-preview", 
+        )
+        
+        # Deduct Credit
         c.execute("UPDATE users SET credits=credits-1 WHERE user_id=?", (user_id,))
         if row[1]: 
-            c.execute("UPDATE users SET credits=credits+1 WHERE user_id=?", (row[1],))
+             c.execute("UPDATE users SET credits=credits+1 WHERE user_id=?", (row[1],))
         conn.commit()
         
-        # Removed parse_mode here too for safety
-        await update.message.reply_text(response.text)
-        
+        await update.message.reply_text(chat_completion.choices[0].message.content)
+
     except Exception as e:
-        await update.message.reply_text("⚠️ Error reading file. Please try again.")
+        await update.message.reply_text(f"⚠️ Error: {e}")
         print(f"Error: {e}")
     
     conn.close()
@@ -220,6 +209,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("buy", buy))
     app.add_handler(CommandHandler("add", add_credits))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.PDF, handle_file))
-
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
     app.run_polling()
