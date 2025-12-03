@@ -12,12 +12,12 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ---------------------------------------------------------
-# PASTE YOUR DETAILS HERE
+# PASTE YOUR TELEGRAM ADMIN ID HERE
 # ---------------------------------------------------------
-YOUR_TELEGRAM_ID = 1168032644  # <--- REPLACE WITH YOUR ID
-YOUR_UPI_ID = "mayadupare9@okaxis"  # <--- REPLACE WITH YOUR UPI
+YOUR_TELEGRAM_ID = 1168032644  # <--- REPLACE WITH YOUR ID!
+YOUR_UPI_ID = "mayadupare9@okaxis"
 
-# --- AI SETUP (GROQ) ---
+# --- AI SETUP ---
 client = Groq(api_key=GROQ_API_KEY)
 
 # --- DATABASE SETUP ---
@@ -34,11 +34,11 @@ init_db()
 # --- SERVER KEEPER ---
 app = Flask('')
 @app.route('/')
-def home(): return "Groq Bot is Alive!"
+def home(): return "Bot is Alive!"
 def run_http(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): t = Thread(target=run_http); t.start()
 
-# --- HELPER: ENCODE IMAGE ---
+# --- HELPER ---
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
@@ -52,7 +52,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = sqlite3.connect('users.db')
     c = conn.cursor()
-    if not c.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone():
+    
+    # Check if user exists
+    c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    if not c.fetchone():
         referrer = None
         if args and args[0].startswith("ref_"):
             try:
@@ -66,18 +69,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg = (
             f"👋 **Welcome {first_name}!**\n\n"
-            "I am your AI UPSC Mentor (Powered by Groq).\n"
+            "I am your AI UPSC Mentor.\n"
             "You have **3 Free Credits**.\n\n"
-            "🔥 **Features:**\n"
-            "1. 📸 **Upload Photo** -> Check Answer (No PDFs)\n"
+            "🔥 **Try it:**\n"
+            "1. 📸 **Upload Photo** -> Check Answer\n"
             "2. 🧠 `/explain [Topic]` (Free)\n"
-            "3. 📰 `/news [Link]` (Free)\n"
-            "4. 💎 `/buy` -> Get Credits"
+            "3. 💰 `/balance` -> Check Credits\n"
+            "4. 💎 `/buy` -> Buy More"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
     else:
-        await update.message.reply_text("Welcome back! Send /balance to check credits.")
+        await update.message.reply_text("Welcome back! Type `/balance` to check credits.", parse_mode="Markdown")
     conn.close()
+
+async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("SELECT credits FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        await update.message.reply_text(f"💰 **Your Balance:** {row[0]} Credits")
+    else:
+        await update.message.reply_text("Type `/start` first to create an account.")
 
 async def explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = " ".join(context.args)
@@ -92,39 +108,19 @@ async def explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "role": "user",
                 "content": f"Explain '{topic}' to a UPSC aspirant in simple English with an Indian example.",
             }],
-            # Using the stable text model
-            model="llama-3.3-70b-versatile", 
+            model="llama-3.1-8b-instant", 
         )
         await update.message.reply_text(chat_completion.choices[0].message.content)
     except Exception as e:
-        await update.message.reply_text(f"⚠️ AI Error: {e}")
-
-async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = " ".join(context.args)
-    if not text:
-        await update.message.reply_text("❌ Usage: `/news [Paste Link/Text]`")
-        return
-    await update.message.reply_text("📰 **Summarizing...**")
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[{
-                "role": "user",
-                "content": f"Summarize this for UPSC in 3 bullet points: {text[:2000]}",
-            }],
-            model="llama-3.3-70b-versatile", 
-        )
-        await update.message.reply_text(chat_completion.choices[0].message.content)
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ AI Error: {e}")
+        await update.message.reply_text(f"⚠️ Error: {e}")
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     msg = f"""
     💎 **Premium Credit Packs**
     
-    • **Trial Pack:** ₹29 (3 Evaluations)
-    • **Starter Pack:** ₹199 (20 Evaluations)
-    • **Mains Warrior:** ₹499 (60 Evaluations)
+    • **Starter:** ₹29 (3 Evaluations)
+    • **Mains:** ₹199 (20 Evaluations)
     
     **How to Pay:**
     1. Send to: `{YOUR_UPI_ID}` 
@@ -135,19 +131,40 @@ async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def add_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Logic: /add 123456 10
     if update.effective_user.id != YOUR_TELEGRAM_ID: return 
+    
     try:
         target_user = int(context.args[0])
         amount = int(context.args[1])
+        
         conn = sqlite3.connect('users.db')
         c = conn.cursor()
-        c.execute("UPDATE users SET credits=credits+? WHERE user_id=?", (amount, target_user))
+        
+        # Check if user exists
+        c.execute("SELECT credits FROM users WHERE user_id=?", (target_user,))
+        row = c.fetchone()
+        
+        if row:
+            # Update existing user
+            new_credits = row[0] + amount
+            c.execute("UPDATE users SET credits=? WHERE user_id=?", (new_credits, target_user))
+        else:
+            # Create new user if they don't exist (Force Add)
+            c.execute("INSERT INTO users VALUES (?, ?, ?)", (target_user, amount, None))
+            
         conn.commit()
         conn.close()
+        
         await update.message.reply_text(f"✅ Added {amount} credits to {target_user}")
-        await context.bot.send_message(target_user, f"💎 Payment Received! {amount} Credits added.")
-    except:
-        await update.message.reply_text("❌ Usage: `/add [User_ID] [Amount]`")
+        # Try to notify user (might fail if they haven't started bot, but that's ok)
+        try:
+            await context.bot.send_message(target_user, f"💎 **Payment Received!**\n{amount} Credits added.")
+        except:
+            await update.message.reply_text("⚠️ Credits added, but user hasn't started bot yet.")
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -159,12 +176,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ **0 Credits!** Please `/buy` more.")
         conn.close()
         return
-
-    # Check if it's a photo (Groq cannot handle PDFs directly)
-    if not update.message.photo:
-         await update.message.reply_text("⚠️ **Error:** Please upload a **PHOTO** (JPG/PNG). I cannot read PDF files directly yet.")
-         conn.close()
-         return
 
     msg = await update.message.reply_text("🔍 **Strict Examiner is checking...**")
     
@@ -179,37 +190,35 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "You are a strict UPSC Examiner. Transcribe 1 sentence. Check Intro, Body, Conclusion. Score out of 10."},
+                    {"type": "text", "text": "You are a strict UPSC Examiner. Check Intro, Body, Conclusion. Score out of 10."},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
                 ],
             }],
-            # UPDATED to the 90b model (11b is deprecated)
             model="llama-3.2-90b-vision-preview", 
         )
         
         # Deduct Credit
         c.execute("UPDATE users SET credits=credits-1 WHERE user_id=?", (user_id,))
-        if row[1]: 
-             c.execute("UPDATE users SET credits=credits+1 WHERE user_id=?", (row[1],))
+        if row[1]: c.execute("UPDATE users SET credits=credits+1 WHERE user_id=?", (row[1],))
         conn.commit()
         
         await update.message.reply_text(chat_completion.choices[0].message.content)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error: {e}")
-        print(f"Error: {e}")
     
     conn.close()
     if os.path.exists(file_name): os.remove(file_name)
     await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg.message_id)
 
+# --- START ---
 if __name__ == '__main__':
     keep_alive()
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("explain", explain))
-    app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("buy", buy))
     app.add_handler(CommandHandler("add", add_credits))
+    app.add_handler(CommandHandler("balance", balance)) # NEW HANDLER
     app.add_handler(MessageHandler(filters.PHOTO, handle_image))
     app.run_polling()
