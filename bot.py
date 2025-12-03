@@ -9,12 +9,13 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # <--- New Key Name
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # ---------------------------------------------------------
-# CHANGE #1: PASTE YOUR TELEGRAM ADMIN ID HERE
+# PASTE YOUR DETAILS HERE
 # ---------------------------------------------------------
-YOUR_TELEGRAM_ID = 1168032644 
+YOUR_TELEGRAM_ID = 1168032644  # <--- REPLACE WITH YOUR ID
+YOUR_UPI_ID = "mayadupare9@okaxis"  # <--- REPLACE WITH YOUR UPI
 
 # --- AI SETUP (GROQ) ---
 client = Groq(api_key=GROQ_API_KEY)
@@ -65,10 +66,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg = (
             f"👋 **Welcome {first_name}!**\n\n"
-            "I am your AI UPSC Mentor (Powered by Llama 3).\n"
+            "I am your AI UPSC Mentor (Powered by Groq).\n"
             "You have **3 Free Credits**.\n\n"
             "🔥 **Features:**\n"
-            "1. 📸 **Upload Photo** -> Check Answer\n"
+            "1. 📸 **Upload Photo** -> Check Answer (No PDFs)\n"
             "2. 🧠 `/explain [Topic]` (Free)\n"
             "3. 📰 `/news [Link]` (Free)\n"
             "4. 💎 `/buy` -> Get Credits"
@@ -91,7 +92,8 @@ async def explain(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "role": "user",
                 "content": f"Explain '{topic}' to a UPSC aspirant in simple English with an Indian example.",
             }],
-            model="llama-3.1-8b-instant", 
+            # Using the stable text model
+            model="llama-3.3-70b-versatile", 
         )
         await update.message.reply_text(chat_completion.choices[0].message.content)
     except Exception as e:
@@ -109,7 +111,7 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "role": "user",
                 "content": f"Summarize this for UPSC in 3 bullet points: {text[:2000]}",
             }],
-            model="llama-3.1-8b-instant", 
+            model="llama-3.3-70b-versatile", 
         )
         await update.message.reply_text(chat_completion.choices[0].message.content)
     except Exception as e:
@@ -117,11 +119,6 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # ---------------------------------------------------------
-    # CHANGE #2: PASTE YOUR UPI ID BELOW
-    # ---------------------------------------------------------
-    YOUR_UPI_ID = "mayadupare9@okaxis" 
-    
     msg = f"""
     💎 **Premium Credit Packs**
     
@@ -163,15 +160,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         return
 
-    msg = await update.message.reply_text("🔍 **Llama Vision is checking...**")
+    # Check if it's a photo (Groq cannot handle PDFs directly)
+    if not update.message.photo:
+         await update.message.reply_text("⚠️ **Error:** Please upload a **PHOTO** (JPG/PNG). I cannot read PDF files directly yet.")
+         conn.close()
+         return
+
+    msg = await update.message.reply_text("🔍 **Strict Examiner is checking...**")
     
-    # Download Photo (Groq accepts jpg/png)
     file_name = "temp.jpg"
     try:
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_name)
         
-        # Encode for Groq
         base64_image = encode_image(file_name)
         
         chat_completion = client.chat.completions.create(
@@ -182,7 +183,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
                 ],
             }],
-            model="llama-3.2-11b-vision-preview", 
+            # UPDATED to the 90b model (11b is deprecated)
+            model="llama-3.2-90b-vision-preview", 
         )
         
         # Deduct Credit
